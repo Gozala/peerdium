@@ -1,212 +1,182 @@
-const base = location.href.startsWith("https://lunet.link/ipfs/") ? "" : "."
-
-const localstorage_available = typeof Storage !== "undefined"
-var quill
-
-function update_heart(class_name) {
-  var heart_div_parent = document.getElementById("heart-parent")
-  while (heart_div_parent.hasChildNodes()) {
-    heart_div_parent.removeChild(heart_div_parent.lastChild)
-  }
-  var heart_div = document.createElement("div")
-  heart_div.className = class_name
-  heart_div_parent.appendChild(heart_div)
-}
-
-function save_doc() {
-  if (localstorage_available) {
-    localStorage.setItem(get_info_hash_from_url(), encryped_content)
-  }
-}
-
-function remove_doc() {
-  if (localstorage_available) {
-    localStorage.removeItem(get_info_hash_from_url())
-  }
-}
-
-const parseHash = () => {
-  const password = location.hash.slice(1, 25)
-  const address = location.hash.slice(25)
-  if (password.length === 24 && address.length > 24) {
-    return [password, address]
-  } else {
-    return null
-  }
-}
-const toHex = bytes =>
-  Array.from(bytes)
-    .map(byte => ("00" + byte.toString(16)).slice(-2))
-    .join("")
-
-const fromHex = hex => hex.match(/.{2}/g).map(byte => parseInt(byte, 16))
-
-const generatePassword = (size = 12) =>
-  toHex(crypto.getRandomValues(new Uint8Array(size)))
-
-const encrypt = async (message, password) => {
-  const rawKey = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(password)
-  )
-
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-  const algorithm = { name: "AES-GCM", iv }
-  const key = await crypto.subtle.importKey("raw", rawKey, algorithm, false, [
-    "encrypt"
-  ])
-
-  const encryptedMessage = await crypto.subtle.encrypt(
-    algorithm,
-    key,
-    new TextEncoder().encode(message)
-  )
-
-  const cipher = Array.from(new Uint8Array(encryptedMessage))
-    .map(byte => String.fromCharCode(byte))
-    .join("")
-
-  return toHex(iv) + btoa(cipher)
-}
-
-const decrypt = async (data, password) => {
-  const rawKey = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(password)
-  )
-  const iv = new Uint8Array(fromHex(data.slice(0, 24)))
-
-  const algorithm = { name: "AES-GCM", iv }
-  const key = await crypto.subtle.importKey("raw", rawKey, algorithm, false, [
-    "decrypt"
-  ])
-
-  const encodedMessage = atob(data.slice(24))
-  const encryptedMessage = encodedMessage
-    .match(/[\s\S]/g)
-    .map(ch => ch.charCodeAt(0))
-
-  const message = await crypto.subtle.decrypt(
-    algorithm,
-    key,
-    new Uint8Array(encryptedMessage)
-  )
-  return new TextDecoder().decode(message)
-}
-
-const publish = async file => {
-  const data = new FormData()
-  data.append("file", file)
-
-  const put = await fetch(`${base}/api/v0/add`, {
-    body: data,
-    method: "POST"
-  })
-  const { Hash } = await put.json()
-
-  return Hash
-}
-
-const load = async cid => {
-  const response = await fetch(`${base}/ipfs/${cid}`)
-  if (response.status === 200) {
-    return await response.text()
-  } else {
-    throw new Error(
-      `Unable to fetch document ${response.statusText} : ${response.status}`
-    )
-  }
-}
-
-const addToLibrary = async (hash, title) => {
-  const params = new URLSearchParams([
-    ["arg", `/ipfs/${hash}`],
-    ["arg", `/${title}`]
-  ])
-
-  return await fetch(`${base}/api/v0/files/cp?${params.toString()}`, {
-    method: "POST"
-  })
-}
-
-var post_info = new Vue({
-  el: "#post-info-section",
-  data: {
-    show_post_button: true,
-    class_name: ""
-  },
-  methods: {
-    post_document: async () => {
-      const password = generatePassword()
-      const text = quill.getText()
-      const title = text.slice(0, text.indexOf("\n"))
-      const document = JSON.stringify(quill.getContents())
-      const content = await encrypt(document, password)
-      const file = new File([content], title, { type: "text/plain" })
-      const hash = await publish(file)
-
-      location.hash = `${password}${hash}`
-
-      if (title.length > 0) {
-        await addToLibrary(hash, title)
-      }
-    },
-    toogle_heart: function() {
-      if (post_info.class_name === "fas fa-heart") {
-        post_info.class_name = "far fa-heart"
-        update_heart(post_info.class_name)
-        remove_doc()
+class Effect {
+  static async loadDocument() {
+    const request = await fetch("/data/", { method: "LIST" })
+    const entries = await request.json()
+    const entry = entries.find(entry => entry.open)
+    if (entry) {
+      const content = await fetch(`${entry.path}/document.json`)
+      if (content.ok) {
+        const data = await content.json()
+        return { path: entry.path, content: data, writable: entry.writable }
       } else {
-        post_info.class_name = "fas fa-heart"
-        update_heart(post_info.class_name)
-        save_doc()
+        return Error("Failed to load")
       }
+
+      if (entry.writable) {
+        this.enableEditing()
+      }
+    } else {
+      return null
     }
   }
-})
-
-var editor = new Vue({
-  el: "#editor",
-  async mounted() {
-    var toolbarOptions = {
-      container: [
-        [{ header: 1 }, { header: 2 }],
-        ["bold", "italic", "underline", "strike"],
-        ["blockquote", "code-block"],
-        [{ color: [] }],
-        [{ list: "bullet" }],
-        ["link", "image"]
-      ]
+  static async publishDocument(content, path = null) {
+    if (path) {
+      await Effect.writeDocument(path, content, { truncate: true })
+      return path
+    } else {
+      const [head] = content.ops
+      const [title] = (head.insert || "").split("\n")
+      const name = title || "Untitled"
+      const open = await fetch(`/data/${name}.quill?create`, {
+        method: "OPEN"
+      })
+      const { path } = await open.json()
+      await Effect.writeDocument(path, content, {
+        create: true,
+        truncate: true
+      })
+      return path
     }
+  }
+  static async writeDocument(path, content, options = {}) {
+    const params = new URLSearchParams(options)
+    await fetch(`${path}/document.json?${params.toString()}`, {
+      method: "PUT",
+      body: JSON.stringify(content)
+    })
+  }
+}
 
-    const placeholder =
-      "Start writing.\n\nSelect the text for formatting options."
-    quill = new Quill("#editor", {
+class Main {
+  constructor() {
+    this.editorView = document.querySelector("#editor")
+    this.bookmarkButtonView = document.querySelector("#heart-parent")
+    this.publishButtonView = document.querySelector("#post-public-button")
+    this.editorView = document.querySelector("#editor")
+    this.editor = new Quill(this.editorView, {
       modules: {
-        toolbar: toolbarOptions
+        toolbar: {
+          container: [
+            [{ header: 1 }, { header: 2 }],
+            ["bold", "italic", "underline", "strike"],
+            ["blockquote", "code-block"],
+            [{ color: [] }],
+            [{ list: "bullet" }],
+            ["link", "image"]
+          ]
+        }
       },
       theme: "bubble",
-      placeholder: placeholder
+      placeholder: "Start writing.\n\nSelect the text for formatting options."
     })
+    this.listen()
+    this.activate()
+  }
+  listen() {
+    this.editor.on("text-change", () => {
+      this.onContentChange()
+    })
+    this.bookmarkButtonView.addEventListener("click", this)
+    this.publishButtonView.addEventListener("click", this)
+  }
+  set publishDisabled(value) {
+    this.publishButtonView.disabled = value
+  }
+  get publishDisabled() {
+    return this.publishButtonView.disabled
+  }
 
-    const hash = parseHash()
-    if (hash) {
-      try {
-        const [password, address] = hash
-        quill.enable(false)
-        quill.setText("Loading.......")
-        post_info.class_name = "far fa-heart"
-        post_info.show_post_button = false
-
-        const content = await load(address)
-        const data = await decrypt(content, password)
-        const document = JSON.parse(data)
-        quill.setContents(document)
-      } catch (error) {
-        quill.setText(`Ooops something went wrong\n\n ${error}`)
+  onPublish() {
+    this.publish()
+  }
+  onContentChange() {
+    if (this.writable) {
+      this.publishDisabled = false
+    }
+  }
+  handleEvent(event) {
+    switch (event.type) {
+      case "click": {
+        return this.onClick(event)
       }
     }
-
-    quill.focus()
   }
-})
+  onClick(event) {
+    switch (event.target) {
+      case this.bookmarkButtonView:
+        return this.onToggle()
+      case this.publishButtonView:
+        return this.onPublish()
+    }
+  }
+
+  set text(text) {
+    this.editor.setText(text)
+  }
+  get text() {
+    return this.editor.getText()
+  }
+  get writable() {
+    return this.editor.isEnabled()
+  }
+  get content() {
+    return this.editor.getContents()
+  }
+  set content(content) {
+    return this.editor.setContents(content)
+  }
+  set writable(value) {
+    if (value) {
+      this.editor.enable(true)
+      this.editor.focus()
+    } else {
+      this.bookmarked = false
+      this.editor.enable(false)
+    }
+  }
+  async activate() {
+    this.writable = false
+    this.text = "Loading......."
+    const result = await Effect.loadDocument()
+    if (result === null) {
+      this.text = ""
+      this.writable = true
+    } else if (result instanceof Error) {
+      this.text = "Ooops, something went wrong. Failing to load a document!"
+      this.writable = false
+    } else {
+      const { path, writable, content } = result
+      this.path = path
+      this.content = content
+      this.writable = writable
+      this.bookmarked = writable
+    }
+  }
+  async publish() {
+    try {
+      this.publishDisabled = true
+      const path = await Effect.publishDocument(
+        this.editor.getContents(),
+        this.path
+      )
+      this.path = path
+      this.bookmarked = true
+    } catch (error) {
+      this.publishDisabled = false
+    }
+  }
+  get path() {
+    return this.editorView.getAttribute("data-source")
+  }
+  set path(path) {
+    this.editorView.setAttribute("data-source", path)
+  }
+  set bookmarked(value) {
+    this.bookmarkButtonView.className = value ? "fas fa-heart" : "far fa-heart"
+  }
+  get bookmarked() {
+    return this.writable
+  }
+}
+
+self.main = new Main()

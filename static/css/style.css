@@ -14,6 +14,11 @@ article {
     margin-right: auto;
 }
 
+
+button:disabled {
+    display: none;
+}
+
 #post-public-button {
     font-family: CustomSansSerif,'Lucida Grande',Arial,sans-serif;
     font-weight: 600;

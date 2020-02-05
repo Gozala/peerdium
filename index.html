@@ -1,8 +1,3 @@
-<link rel="stylesheet" href="./static/css/quill.bubble.css">
-<script src="./static/js/vue.js"></script>
-<link href="./static/css/style.css" rel="stylesheet">
-
-
 <!DOCTYPE html>
 <html>
   <head>
@@ -10,13 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Peerdium</title>
     <link rel="stylesheet" href="./static/css/all.css" integrity="sha384-DNOHZ68U8hZfKXOrtjWvjxusGo9WQnrNx2sqG0tfsghAvtVlRW3tvkXWZh58N9jp" crossorigin="anonymous">
+    <link rel="stylesheet" href="./static/css/quill.bubble.css">
+    <link href="./static/css/style.css" rel="stylesheet">
+    <script src="./static/js/quill.js"></script>
+    <script src="./static/js/editor.js" async defer></script>
   </head>
   <body>
       <div id="post-info-section">
-        <div title="Hearted posts would be stored in browser and can be viewed even if no one else is sharing them" id="heart-parent" v-on:click="toogle_heart">
-          <div v-bind:class="class_name"></div>
+        <div title="Hearted posts would be stored in browser and can be viewed even if no one else is sharing them" id="heart-parent">
         </div>
-        <button v-if="show_post_button" id="post-public-button" v-on:click="post_document">PUBLISH</button>
+        <button id="post-public-button" disabled>SAVE</button>
       </div>
     <article>
       <div class="standalone-container">
@@ -26,8 +24,3 @@
   </section>
   </body>
 </html>
-
-<script src="./static/js/quill.js"></script>
-<script src="./static/js/aes.js"></script>
-<script src="./static/js/editor.js"></script>
-
